@@ -34,6 +34,9 @@ class GoogleSmartDevice:
             print('Config loaded.')
             self.config = config
 
+            self.devices = self._getDevices()['devices']
+            self.structures = self._getStructures()['structures']
+
         else:
             if project_id is None or client_id is None or client_secret is None:
                 raise Exception('Missing authorization args')
@@ -85,6 +88,9 @@ class GoogleSmartDevice:
                 print(r.text)
                 raise Exception('Bad response.')
 
+            self.devices = r.json()['devices']
+            self.structures = self._getStructures()['structures']
+
             config = {
                 'clientID': client_id,
                 'clientSecret': client_secret,
@@ -131,7 +137,7 @@ class GoogleSmartDevice:
 
             print('Refresh success.')
 
-    def getStructures(self):
+    def _getStructures(self):
         self._refreshToken()
 
         url = f"{self.baseURL}{self.config['projectID']}/structures"
@@ -145,7 +151,7 @@ class GoogleSmartDevice:
 
         return r.json()
 
-    def getDevices(self):
+    def _getDevices(self):
         self._refreshToken()
 
         url = f"{self.baseURL}{self.config['projectID']}/devices"
