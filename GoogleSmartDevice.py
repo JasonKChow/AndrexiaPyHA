@@ -34,6 +34,10 @@ class GoogleSmartDevice:
             print('Config loaded.')
             self.config = config
 
+            # Create authorization headers
+            self.authHeaders = {'Content-Type': 'application/json',
+                                'Authorization': f'Bearer {self.config["accessToken"]}'}
+
             self.devices = self._getDevices()['devices']
             self.structures = self._getStructures()['structures']
 
@@ -80,16 +84,15 @@ class GoogleSmartDevice:
 
             # Send device request to finish authorization
             url = f'{self.baseURL}{project_id}/devices'
-            headers = {'Content-Type': 'application/json',
-                       'Authorization': f'Bearer {accessToken}'}
-            r = rq.get(url=url, headers=headers)
+            self.authHeaders = {'Content-Type': 'application/json',
+                                'Authorization': f'Bearer {accessToken}'}
+            r = rq.get(url=url, headers=self.authHeaders)
 
             if not r.status_code == 200:
                 print(r.text)
                 raise Exception('Bad response.')
 
             self.devices = r.json()['devices']
-            self.structures = self._getStructures()['structures']
 
             config = {
                 'clientID': client_id,
@@ -106,6 +109,9 @@ class GoogleSmartDevice:
 
             print('Authorization complete.')
             self.config = config
+
+            self.structures = self._getStructures()['structures']
+
 
     def _refreshToken(self) -> None:
         # Refresh is not always needed
@@ -130,6 +136,8 @@ class GoogleSmartDevice:
             response = r.json()
             self.config['accessToken'] = response['access_token']
             self.config['expiresAt'] = response['expires_in'] + time()
+            self.authHeaders = {'Content-Type': 'application/json',
+                                'Authorization': f"Bearer {self.config['accessToken']}"}
 
             # Save json
             with open(self.configPath, 'w') as out:
@@ -140,10 +148,8 @@ class GoogleSmartDevice:
     def _getStructures(self):
         self._refreshToken()
 
-        url = f"{self.baseURL}{self.config['projectID']}/structures"
-        headers = {'Content-Type': 'application/json',
-                   'Authorization': f"Bearer {self.config['accessToken']}"}
-        r = rq.get(url=url, headers=headers)
+        url = f"{self.baseURL+self.config['projectID']}/structures"
+        r = rq.get(url=url, headers=self.authHeaders)
 
         if not r.status_code == 200:
             print(r.text)
@@ -154,10 +160,33 @@ class GoogleSmartDevice:
     def _getDevices(self):
         self._refreshToken()
 
-        url = f"{self.baseURL}{self.config['projectID']}/devices"
+        url = f"{self.baseURL+self.config['projectID']}/devices"
         headers = {'Content-Type': 'application/json',
                    'Authorization': f"Bearer {self.config['accessToken']}"}
         r = rq.get(url=url, headers=headers)
+
+        if not r.status_code == 200:
+            print(r.text)
+            raise Exception('Bad response.')
+
+        return r.json()
+
+    def getCameraStream(self):
+        # Figure out camera ID
+        cameraID = None
+        for device in self.devices:
+            if device['type'] == 'sdm.devices.types.DOORBELL':
+                cameraID = device['name'].split('/')[-1]
+                break
+
+        if cameraID is None:
+            raise Exception('No camera found.')
+
+        # Make request
+        url = f'{self.baseURL+self.config["projectID"]}' \
+              f'/devices/{cameraID}:executeCommand'
+        params = "{'command': 'sdm.devices.commands.CameraLiveStream.GenerateRtspStream','params': {}}"
+        r = rq.post(url=url, data=params, headers=self.authHeaders)
 
         if not r.status_code == 200:
             print(r.text)
@@ -173,3 +202,4 @@ if __name__ == '__main__':
     gsd = GoogleSmartDevice(project_id=myCreds['projectID'],
                             client_id=myCreds['clientID'],
                             client_secret=myCreds['clientSecret'])
+    gsd.getCameraStream()
