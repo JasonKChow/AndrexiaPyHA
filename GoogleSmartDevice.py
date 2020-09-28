@@ -2,6 +2,8 @@ import requests as rq
 import json
 import os.path
 from time import time
+from datetime import datetime
+import asyncio
 
 configPath = './GoogleConfig.json'
 
@@ -20,7 +22,7 @@ class GoogleSmartDevice:
         configKeys = ['clientID', 'clientSecret', 'projectID',
                       'accessToken', 'expiresAt', 'refreshToken']
         self.configPath = config_path
-        self.baseURL = 'https://smartdevicemanagement.googleapis.com/v1/enterprises/'
+        self.streamInfo = None
 
         if os.path.isfile(self.configPath):
             with open(self.configPath) as configFile:
@@ -33,6 +35,8 @@ class GoogleSmartDevice:
 
             print('Config loaded.')
             self.config = config
+            self.baseURL = f'https://smartdevicemanagement.googleapis.com/' \
+                           f'v1/enterprises/{self.config["projectID"]}/'
 
             # Create authorization headers
             self.authHeaders = {'Content-Type': 'application/json',
@@ -82,8 +86,11 @@ class GoogleSmartDevice:
             refreshToken = response['refresh_token']
             expiresAt = response['expires_in'] + time()
 
+            self.baseURL = f'https://smartdevicemanagement.googleapis.com/' \
+                           f'v1/enterprises/{project_id}/'
+
             # Send device request to finish authorization
-            url = f'{self.baseURL}{project_id}/devices'
+            url = f'{self.baseURL}devices'
             self.authHeaders = {'Content-Type': 'application/json',
                                 'Authorization': f'Bearer {accessToken}'}
             r = rq.get(url=url, headers=self.authHeaders)
@@ -148,7 +155,7 @@ class GoogleSmartDevice:
     def _getStructures(self):
         self._refreshToken()
 
-        url = f"{self.baseURL+self.config['projectID']}/structures"
+        url = f"{self.baseURL}structures"
         r = rq.get(url=url, headers=self.authHeaders)
 
         if not r.status_code == 200:
@@ -160,7 +167,7 @@ class GoogleSmartDevice:
     def _getDevices(self):
         self._refreshToken()
 
-        url = f"{self.baseURL+self.config['projectID']}/devices"
+        url = f"{self.baseURL}devices"
         headers = {'Content-Type': 'application/json',
                    'Authorization': f"Bearer {self.config['accessToken']}"}
         r = rq.get(url=url, headers=headers)
@@ -171,11 +178,12 @@ class GoogleSmartDevice:
 
         return r.json()
 
-    def getCameraStream(self):
+    def _startCameraStream(self):
         # Figure out camera ID
         cameraID = None
         for device in self.devices:
-            if device['type'] == 'sdm.devices.types.DOORBELL':
+            if device['type'] == 'sdm.devices.types.DOORBELL' or \
+                    device['type'] == 'sdm.devices.types.CAMERA':
                 cameraID = device['name'].split('/')[-1]
                 break
 
@@ -183,16 +191,53 @@ class GoogleSmartDevice:
             raise Exception('No camera found.')
 
         # Make request
-        url = f'{self.baseURL+self.config["projectID"]}' \
-              f'/devices/{cameraID}:executeCommand'
-        params = "{'command': 'sdm.devices.commands.CameraLiveStream.GenerateRtspStream','params': {}}"
-        r = rq.post(url=url, data=params, headers=self.authHeaders)
+        url = f'{self.baseURL}devices/{cameraID}:executeCommand'
+        params = {'command': 'sdm.devices.commands.CameraLiveStream.GenerateRtspStream',
+                  'params': {}}
+        r = rq.post(url=url, data=json.dumps(params), headers=self.authHeaders)
 
         if not r.status_code == 200:
             print(r.text)
             raise Exception('Bad response.')
 
-        return r.json()
+        # Save camera and stream information
+        self.streamInfo = r.json()['results']
+        self.streamInfo['cameraID'] = cameraID
+
+        # Add just the stream url information
+        streamURL = self.streamInfo['streamUrls']['rtspUrl']
+        self.streamInfo['url'] = streamURL.split('?auth=')[0]
+
+        # Convert time
+        timestamp = datetime.strptime(self.streamInfo['expiresAt'][0:-1],
+                                      '%Y-%m-%dT%H:%M:%S.%f').timestamp()
+        self.streamInfo['expiresAt'] = timestamp
+
+        return self.streamInfo
+
+    def _extendStream(self):
+        # Get token
+        streamExtToken = self.streamInfo['streamExtensionToken']
+
+        # Make request
+        url = f'{self.baseURL}devices/{self.curStreamID}:executeCommand'
+        params = {"command": "sdm.devices.commands.CameraLiveStream.ExtendRtspStream",
+                  'params': {"streamExtensionToken": streamExtToken}}
+        r = rq.post(url=url, data=json.dumps(params), headers=self.authHeaders)
+
+        if not r.status_code == 200:
+            print(r.text)
+            raise Exception('Bad response.')
+
+        # Save new information
+        r = r.json()['results']
+        self.streamInfo['streamExtensionToken'] = r['streamExtensionToken']
+        self.streamInfo['streamToken'] = r['streamToken']
+
+        # Convert time to timestamp
+        timestamp = datetime.strptime(self.streamInfo['expiresAt'][0:-1],
+                                      '%Y-%m-%dT%H:%M:%S.%f').timestamp()
+        self.streamInfo['expiresAt'] = timestamp
 
 
 if __name__ == '__main__':
@@ -202,4 +247,4 @@ if __name__ == '__main__':
     gsd = GoogleSmartDevice(project_id=myCreds['projectID'],
                             client_id=myCreds['clientID'],
                             client_secret=myCreds['clientSecret'])
-    gsd.getCameraStream()
+    test = gsd._startCameraStream()
