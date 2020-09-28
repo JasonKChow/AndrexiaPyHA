@@ -220,7 +220,7 @@ class GoogleSmartDevice:
         streamExtToken = self.streamInfo['streamExtensionToken']
 
         # Make request
-        url = f'{self.baseURL}devices/{self.curStreamID}:executeCommand'
+        url = f'{self.baseURL}devices/{self.streamInfo["cameraID"]}:executeCommand'
         params = {"command": "sdm.devices.commands.CameraLiveStream.ExtendRtspStream",
                   'params': {"streamExtensionToken": streamExtToken}}
         r = rq.post(url=url, data=json.dumps(params), headers=self.authHeaders)
@@ -235,9 +235,26 @@ class GoogleSmartDevice:
         self.streamInfo['streamToken'] = r['streamToken']
 
         # Convert time to timestamp
-        timestamp = datetime.strptime(self.streamInfo['expiresAt'][0:-1],
+        timestamp = datetime.strptime(r['expiresAt'][0:-1],
                                       '%Y-%m-%dT%H:%M:%S.%f').timestamp()
         self.streamInfo['expiresAt'] = timestamp
+
+    def _stopStream(self):
+        # Get token
+        streamExtToken = self.streamInfo['streamExtensionToken']
+
+        # Make request
+        url = f'{self.baseURL}devices/{self.streamInfo["cameraID"]}:executeCommand'
+        params = {"command": "sdm.devices.commands.CameraLiveStream.StopRtspStream",
+                  'params': {"streamExtensionToken": streamExtToken}}
+        r = rq.post(url=url, data=json.dumps(params), headers=self.authHeaders)
+
+        if not r.status_code == 200:
+            print(r.text)
+            raise Exception('Bad response.')
+
+        print('Stream ended')
+        self.streamInfo = None
 
 
 if __name__ == '__main__':
