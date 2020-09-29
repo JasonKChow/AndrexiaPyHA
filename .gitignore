@@ -1,2 +1,4 @@
 myGoogleCreds.json
 GoogleConfig.json
+*.bat
+PCModule/config.json
