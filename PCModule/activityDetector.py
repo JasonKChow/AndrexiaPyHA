@@ -2,6 +2,7 @@ from pynput.mouse import Listener as mListener
 from pynput.keyboard import Listener as kListener
 import paho.mqtt.client as mqtt
 from time import time
+from psutil import process_iter, Process, wait_procs
 from infi.systray import SysTrayIcon
 from threading import Thread
 from queue import Queue
@@ -9,7 +10,33 @@ import json
 
 
 def onActivity(*args):
+    global mouseListener
+    global kbListener
+
     mqttQ.put({'topic': 'desktop/activity', 'payload': time()})
+
+    # Look for game process
+    gameProcess = [Process(p.info['pid'])
+                   for p in process_iter(attrs=['name', 'pid'])
+                   if p.info['name'] == 'dota2.exe' or p.info['name'] == 'Gw2-64.exe']
+
+    # Pause and make desktop activity in the future to keep lights on for gaming
+    if gameProcess:
+        mqttQ.put({'topic': 'info/Living Room/lightOverride', 'payload': True})
+        mouseListener.stop()
+        kbListener.stop()
+        systray.update(icon=offImage)
+        systray.update(hover_text='Activity Detector Off')
+        wait_procs(gameProcess)
+
+        mqttQ.put({'topic': 'info/Living Room/lightOverride', 'payload': False})
+        # Remake listeners and start them
+        mouseListener = mListener(on_click=onActivity)
+        kbListener = kListener(on_press=onActivity)
+        mouseListener.start()
+        kbListener.start()
+        systray.update(icon=onImage)
+        systray.update(hover_text='Activity Detector On')
 
 
 def mqttWorker():
