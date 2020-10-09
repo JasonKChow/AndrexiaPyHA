@@ -1,7 +1,5 @@
-myGoogleCreds.json
-GoogleConfig.json
 *.bat
-PCModule/config.json
+*.json
 dist/
 __pycache__/
 build/

@@ -3,8 +3,13 @@ import json
 import os.path
 from time import time
 from datetime import datetime
-import asyncio
+from google.cloud import pubsub_v1
 
+"""
+This code currently requires a service worker to be created for pub/sub events.
+The .json key file path should be pointed to as an environment variable for 
+GOOGLE_APPLICATION_CREDENTIALS.
+"""
 configPath = './GoogleConfig.json'
 
 
@@ -14,13 +19,17 @@ class GoogleSmartDevice:
                  config_path: str = configPath,
                  project_id: str = None,
                  client_id: str = None,
-                 client_secret: str = None):
+                 client_secret: str = None,
+                 topic_id: str = None,
+                 gcp_project_id: str = None,
+                 sub_id: str = None):
         """
         Load or get an authorization config. If a new authorization is being
         made, it needs the project_id, client_id, and client_secret.
         """
-        configKeys = ['clientID', 'clientSecret', 'projectID',
-                      'accessToken', 'expiresAt', 'refreshToken']
+        configKeys = ['clientID', 'clientSecret', 'projectID', 'topicID',
+                      'subID', 'gcpProjectID', 'accessToken', 'expiresAt',
+                      'refreshToken']
         self.configPath = config_path
         self.streamInfo = None
 
@@ -105,6 +114,9 @@ class GoogleSmartDevice:
                 'clientID': client_id,
                 'clientSecret': client_secret,
                 'projectID': project_id,
+                'topicID': topic_id,
+                'subID': sub_id,
+                'gcpProjectID': gcp_project_id,
                 'accessToken': accessToken,
                 'expiresAt': expiresAt,
                 'refreshToken': refreshToken
@@ -119,6 +131,38 @@ class GoogleSmartDevice:
 
             self.structures = self._getStructures()['structures']
 
+        # Check if a subscription is available for pubsub
+        subber = pubsub_v1.SubscriberClient()
+        subPath = f'projects/{self.config["gcpProjectID"]}'
+        response = subber.list_subscriptions(subPath)
+
+        self.eventsReady = False
+        for sub in response:
+            if sub.name.split('/')[-1] == sub_id:
+                self.eventsReady = True
+
+        if not self.eventsReady:
+            print('No valid subscriptions!')
+            print('Create subscription online. Events will not work.')
+            print('More Info: https://developers.google.com/nest/device-access/subscribe-to-events')
+
+    def createSub(self):
+        """Not implemented, it appears perms aren't available."""
+        pass
+
+    def listenSub(self):
+        subscriber = pubsub_v1.SubscriberClient()
+        subPath = f'projects/{self.config["gcpProjectID"]}/subscriptions/' \
+                  f'{self.config["subID"]}'
+
+        def callback(message):
+            print(message.data.decode('utf-8'))
+            message.ack()
+
+        streaming_pull_future = subscriber.subscribe(subPath, callback=callback)
+        print("Listening for messages on {}..\n".format(subPath))
+        with subscriber:
+            streaming_pull_future.result()
 
     def _refreshToken(self) -> None:
         # Refresh is not always needed
@@ -183,7 +227,8 @@ class GoogleSmartDevice:
         cameraID = None
         for device in self.devices:
             if device['type'] == 'sdm.devices.types.DOORBELL' or \
-                    device['type'] == 'sdm.devices.types.CAMERA':
+                    device['type'] == 'sdm.devices.types.CAMERA' or \
+                    device['type'] == 'sdm.devices.types.DISPLAY':
                 cameraID = device['name'].split('/')[-1]
                 break
 
@@ -263,5 +308,8 @@ if __name__ == '__main__':
 
     gsd = GoogleSmartDevice(project_id=myCreds['projectID'],
                             client_id=myCreds['clientID'],
-                            client_secret=myCreds['clientSecret'])
-    test = gsd._startCameraStream()
+                            client_secret=myCreds['clientSecret'],
+                            topic_id=myCreds['topicID'],
+                            gcp_project_id=myCreds['gcpProjectID'],
+                            sub_id='andrexia')
+
